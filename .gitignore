@@ -1,5 +1,7 @@
 .scratch
 
+runs
+
 .env
 
 wandb

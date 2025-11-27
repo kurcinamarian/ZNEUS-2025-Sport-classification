@@ -1,5 +1,7 @@
 .scratch
 
+__pycache__
+
 .env
 
 wandb
