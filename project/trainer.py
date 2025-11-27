@@ -3,11 +3,13 @@ import time
 from pathlib import Path
 
 import pandas as pd
+import matplotlib.pyplot as plt
 
 import wandb
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 
 from sklearn.metrics import (
     classification_report,
@@ -120,6 +122,103 @@ def get_metrics(y_true, y_pred, y_probs):
     }
     
     return metrics
+
+def create_per_class_charts(preds, labels, probs, csv_path, prefix=""):
+    
+    # Create per-class metric bar charts as Images
+    
+    metrics = get_metrics(preds, labels, probs)
+    
+    df = pd.read_csv(csv_path)
+    id_to_label = df.groupby("class id")["labels"].first().to_dict()
+    
+    # Build data
+    per_class_data = []
+    report = metrics['classification_report']
+    for class_id in range(100):
+        class_str = str(class_id)
+        if class_str in report:
+            per_class_data.append([
+                class_id,
+                id_to_label.get(class_id, class_str),
+                report[class_str]['precision'],
+                report[class_str]['recall'],
+                report[class_str]['f1-score'],
+                metrics['specificity_per_class'][class_id],
+                report[class_str]['support']
+            ])
+    
+    class_labels = [row[1] for row in per_class_data]
+    class_ids = [row[0] for row in per_class_data]
+    
+    # Compute per-class accuracy from confusion matrix
+    from sklearn.metrics import confusion_matrix as sk_confusion_matrix
+    cm = sk_confusion_matrix(labels, preds, labels=list(range(100)))
+    supports = [row[6] for row in per_class_data]
+    accuracy_values = [float(cm[i, i]) / supports[i] if supports[i] else 0.0 for i in range(len(supports))]
+
+    metrics_to_plot = {
+        'accuracy': (accuracy_values, 'Accuracy per Class'),
+        'f1': ([row[4] for row in per_class_data], 'F1 Score per Class'),
+        'precision': ([row[2] for row in per_class_data], 'Precision per Class'),
+        'recall': ([row[3] for row in per_class_data], 'Recall per Class')
+    }
+    
+    log_dict = {}
+    for metric_name, (values, title) in metrics_to_plot.items():
+        fig, ax = plt.subplots(figsize=(20, 6))
+        ax.bar(class_ids, values)
+        ax.set_xlabel('Class ID')
+        ax.set_ylabel(metric_name.capitalize())
+        ax.set_title(f"{prefix}{title}" if prefix else title)
+        ax.set_xticks(class_ids)
+        ax.set_xticklabels(class_labels, rotation=90, ha='right', fontsize=8)
+        ax.grid(axis='y', alpha=0.3)
+        plt.tight_layout()
+        
+        log_dict[f"{prefix}per_class_{metric_name}"] = wandb.Image(fig)
+        plt.close(fig)
+    
+    return log_dict
+
+def create_confusion_matrix_images(y_true, y_pred, class_names=None, title_prefix=""):
+    
+    # Create confusion matrix images
+
+    log_dict = {}
+
+    unique_classes = sorted(set(y_true) | set(y_pred))
+    n_classes = len(unique_classes)
+    labels = list(range(100)) if class_names is None else list(range(len(class_names)))
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    # Row-normalize
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cm_norm = cm.astype(np.float32)
+        row_sums = cm_norm.sum(axis=1, keepdims=True)
+        cm_norm = np.divide(cm_norm, row_sums, out=np.zeros_like(cm_norm), where=row_sums!=0)
+
+    figsize = (min(14, max(8, n_classes/8)), min(12, max(6, n_classes/10)))
+    fig1, ax1 = plt.subplots(figsize=figsize)
+    im = ax1.imshow(cm_norm, interpolation='nearest', cmap='Blues')
+    ax1.set_title(f"{title_prefix}Confusion Matrix (row-normalized)")
+    ax1.set_xlabel('Predicted label')
+    ax1.set_ylabel('True label')
+    cbar = fig1.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+    cbar.ax.set_ylabel('Proportion', rotation=90)
+
+    if n_classes <= 20 and class_names is not None:
+        ax1.set_xticks(range(n_classes))
+        ax1.set_yticks(range(n_classes))
+        ax1.set_xticklabels(class_names, rotation=90, fontsize=8)
+        ax1.set_yticklabels(class_names, fontsize=8)
+    else:
+        ax1.set_xticks([])
+        ax1.set_yticks([])
+    plt.tight_layout()
+    log_dict[f"{title_prefix}confusion_matrix_img"] = wandb.Image(fig1)
+    plt.close(fig1)
+
+    return log_dict
 
 def train_one_epoch(model, loader, device, optimizer, criterion, scaler):
     
@@ -278,7 +377,12 @@ def main():
         checkpoint = torch.load(best_path, map_location=device)
         model.load_state_dict(checkpoint["model_state"])
 
-    # Test evaluation
+    # Final evaluation on all sets
+    train_loss, train_acc, train_preds, train_labels, train_probs = evaluate(
+        model, train_loader, device, criterion, return_predictions=True)
+    
+    val_loss, val_acc, val_preds, val_labels, val_probs = evaluate(
+        model, valid_loader, device, criterion, return_predictions=True)
     
     test_loss, test_acc, test_preds, test_labels, test_probs = evaluate(
         model, test_loader, device, criterion, return_predictions=True)
@@ -299,24 +403,13 @@ def main():
             "test_recall_weighted": test_metrics["recall_weighted"],
         })
         
-        # Log detailed 100x100 confusion matrix
-        wandb.log({"confusion_matrix_detailed": wandb.plot.confusion_matrix(
-            probs=None,
-            y_true=test_labels,
-            preds=test_preds,
-            class_names=[str(i) for i in range(100)]
-        )})
-        
-        # Create simplified confusion matrix (correct vs incorrect)
-        binary_labels = [1] * len(test_labels)
-        binary_preds = [1 if test_labels[i] == test_preds[i] else 0 for i in range(len(test_labels))]
-        
-        wandb.log({"confusion_matrix_simplified": wandb.plot.confusion_matrix(
-            probs=None,
-            y_true=binary_labels,
-            preds=binary_preds,
-            class_names=["Incorrect", "Correct"]
-        )})
+        # Log confusion matrix
+        cm_images = create_confusion_matrix_images(
+            test_labels, test_preds,
+            class_names=[str(i) for i in range(100)],
+            title_prefix="final_test_"
+        )
+        wandb.log(cm_images)
         
         df = pd.read_csv(CSV_PATH)
         id_to_label = df.groupby("class id")["labels"].first().to_dict()
@@ -343,20 +436,17 @@ def main():
         )
         wandb.log({"per_class_metrics": per_class_table})
         
-        wandb.log({
-            "per_class_f1": wandb.plot.bar(
-                per_class_table, "class_label", "f1",
-                title="F1 score per class"
-            ),
-            "per_class_precision": wandb.plot.bar(
-                per_class_table, "class_label", "precision",
-                title="Precision per class"
-            ),
-            "per_class_recall": wandb.plot.bar(
-                per_class_table, "class_label", "recall",
-                title="Recall per class"
-            )
-        })
+        # Create per-class charts for all sets
+        train_chart_dict = create_per_class_charts(
+            train_preds, train_labels, train_probs, CSV_PATH, prefix="final_train_"
+        )
+        val_chart_dict = create_per_class_charts(
+            val_preds, val_labels, val_probs, CSV_PATH, prefix="final_val_"
+        )
+        test_chart_dict = create_per_class_charts(
+            test_preds, test_labels, test_probs, CSV_PATH, prefix="final_test_"
+        )
+        wandb.log({**train_chart_dict, **val_chart_dict, **test_chart_dict})
         
         wandb.finish()
 
