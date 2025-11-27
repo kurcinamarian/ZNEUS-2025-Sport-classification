@@ -15,7 +15,6 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
     recall_score,
-    roc_auc_score
 )
 import numpy as np
 
@@ -28,11 +27,11 @@ CSV_PATH = r".\.scratch\dataset\sports.csv"
 ROOT_DIR = r".\.scratch\dataset"
 
 EPOCHS = 50
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 LR = 1e-3
 WEIGHT_DECAY = 1e-4
 LABEL_SMOOTHING = 0.1
-NUM_WORKERS = 4
+NUM_WORKERS = 2
 EARLY_STOP_PATIENCE = 10
 
 OUT_DIR = Path("runs") / "sports_cnn_v1"
@@ -40,6 +39,7 @@ OUT_DIR = Path("runs") / "sports_cnn_v1"
 USE_WANDB = True
 WANDB_PROJECT = "zneus-project-2"
 WANDB_RUN_NAME = "sports_cnn_1"
+WANDB_LOG_FREQUENCY = 500
 
 @torch.no_grad()
 def evaluate(model, loader, device, criterion, return_predictions=False):
@@ -106,15 +106,6 @@ def get_metrics(y_true, y_pred, y_probs):
         false_positive = cm[:, i].sum() - cm[i, i]
         specificity = true_negative / (true_negative + false_positive) if (true_negative + false_positive > 0) else 0
         specificity_per_class.append(specificity)
-    
-    # Calculate ROC-AUC
-    try:
-        roc_auc_weighted = roc_auc_score(y_true, y_probs, multi_class='ovr', average='weighted')
-        roc_auc_macro = roc_auc_score(y_true, y_probs, multi_class='ovr', average='macro')
-    except Exception as e:
-        print(f"Warning: ROC-AUC failed: {e}")
-        roc_auc_weighted = 0.0
-        roc_auc_macro = 0.0
         
     metrics = {
         'f1_weighted': f1_weighted,
@@ -123,8 +114,6 @@ def get_metrics(y_true, y_pred, y_probs):
         'f1_macro': f1_macro,
         'precision_macro': precision_macro,
         'recall_macro': recall_macro,
-        'roc_auc_weighted': roc_auc_weighted,
-        'roc_auc_macro': roc_auc_macro,
         'confusion_matrix': cm,
         'classification_report': report,
         'specificity_per_class': specificity_per_class
@@ -206,7 +195,7 @@ def main():
     model = CNN().to(device)
     
     if USE_WANDB:
-        wandb.watch(model, log="all", log_freq=100)
+        wandb.watch(model, log="all", log_freq=WANDB_LOG_FREQUENCY)
     
     # Loss function: CrossEntropyLoss with label smoothing
     criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTHING)
@@ -223,7 +212,7 @@ def main():
     best_path = OUT_DIR / "best.pt"
     last_path = OUT_DIR / "last.pt"
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    best_val_acc = 0.0 # current best value accuracy
+    best_val_acc = 0.0 # current best validation accuracy
     epochs_no_improvement = 0 # Count epoch without improvement for early stopping
     
     # Training loop
@@ -231,9 +220,14 @@ def main():
         t0 = time.time()
         train_loss, train_acc = train_one_epoch(model, train_loader, device, optimizer, criterion, scaler)
         
-        val_loss, val_acc, val_preds, val_labels, val_probs = evaluate(
-            model, valid_loader, device, criterion, return_predictions=True)
-        val_metrics = get_metrics(val_preds, val_labels, val_probs)
+        # Log detailed metrics every 5 epochs
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            val_loss, val_acc, val_preds, val_labels, val_probs = evaluate(
+                model, valid_loader, device, criterion, return_predictions=True)
+            val_metrics = get_metrics(val_preds, val_labels, val_probs)
+        else:
+            val_loss, val_acc = evaluate(model, valid_loader, device, criterion, return_predictions=False)
+            val_metrics = None
         
         scheduler.step()
         dt = time.time() - t0
@@ -245,20 +239,23 @@ def main():
             f"{dt:.1f}s")
         
         if USE_WANDB:
-            # Log parameters
+            # Log metrics
             log_dict = {
                 "epoch": epoch + 1,
                 "train_loss": train_loss,
                 "train_accuracy": train_acc,
-                "value_loss": val_loss,
-                "value_accuracy": val_acc,
-                "value_f1_weighted": val_metrics["f1_weighted"],
-                "value_precision_weighted": val_metrics["precision_weighted"],
-                "value_recall_weighted": val_metrics["recall_weighted"],
-                "value_f1_macro": val_metrics["f1_macro"],
-                "value_roc_auc_weighted": val_metrics["roc_auc_weighted"],
+                "val_loss": val_loss,
+                "val_accuracy": val_acc,
                 "lr": optimizer.param_groups[0]["lr"]
             }
+            # Log detailed metrics
+            if val_metrics is not None:
+                log_dict["val_f1_weighted"] = val_metrics["f1_weighted"]
+                log_dict["val_precision_weighted"] = val_metrics["precision_weighted"]
+                log_dict["val_recall_weighted"] = val_metrics["recall_weighted"]
+                log_dict["val_f1_macro"] = val_metrics["f1_macro"]
+                log_dict["val_precision_macro"] = val_metrics["precision_macro"]
+                log_dict["val_recall_macro"] = val_metrics["recall_macro"]
             wandb.log(log_dict)
         
         save_checkpoint(last_path, model, optimizer, scheduler, epoch, best_val_acc) # Save current state
@@ -291,7 +288,6 @@ def main():
     print(f"TEST | F1-weighted={test_metrics['f1_weighted']:.4f} "
           f"Precision={test_metrics['precision_weighted']:.4f} "
           f"Recall={test_metrics['recall_weighted']:.4f}")
-    print(f"TEST | ROC-AUC={test_metrics['roc_auc_weighted']:.4f}")
     
     if USE_WANDB:
         # Log metrics
@@ -301,14 +297,25 @@ def main():
             "test_f1_weighted": test_metrics["f1_weighted"],
             "test_precision_weighted": test_metrics["precision_weighted"],
             "test_recall_weighted": test_metrics["recall_weighted"],
-            "test_roc_auc_weighted": test_metrics["roc_auc_weighted"],
         })
         
-        wandb.log({"confusion_matrix": wandb.plot.confusion_matrix(
+        # Log detailed 100x100 confusion matrix
+        wandb.log({"confusion_matrix_detailed": wandb.plot.confusion_matrix(
             probs=None,
             y_true=test_labels,
             preds=test_preds,
             class_names=[str(i) for i in range(100)]
+        )})
+        
+        # Create simplified confusion matrix (correct vs incorrect)
+        binary_labels = [1] * len(test_labels)
+        binary_preds = [1 if test_labels[i] == test_preds[i] else 0 for i in range(len(test_labels))]
+        
+        wandb.log({"confusion_matrix_simplified": wandb.plot.confusion_matrix(
+            probs=None,
+            y_true=binary_labels,
+            preds=binary_preds,
+            class_names=["Incorrect", "Correct"]
         )})
         
         df = pd.read_csv(CSV_PATH)
