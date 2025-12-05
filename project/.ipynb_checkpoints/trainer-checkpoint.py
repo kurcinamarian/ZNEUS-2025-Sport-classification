@@ -9,9 +9,6 @@ import wandb
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-import kagglehub
-import os
 
 
 from sklearn.metrics import (
@@ -21,30 +18,30 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+import numpy as np
 
 from dataloader import create_dataloaders
-
-from config import (
-    MODEL,
-    EPOCHS,
-    BATCH_SIZE,
-    LR,
-    WEIGHT_DECAY,
-    LABEL_SMOOTHING,
-    NUM_WORKERS,
-    EARLY_STOP_PATIENCE,
-    OUT_DIR,
-    USE_WANDB,
-    WANDB_PROJECT,
-    WANDB_ENTITY,
-    WANDB_RUN_NAME,
-    WANDB_LOG_FREQUENCY,
-)
+from model import CNN
 
 # Initial parameters
-ROOT_DIR = kagglehub.dataset_download("gpiosenka/sports-classification")
-CSV_PATH = os.path.join(ROOT_DIR, "new_sports.csv")
 
+CSV_PATH = r".\.scratch\dataset\sports.csv"
+ROOT_DIR = r".\.scratch\dataset"
+
+EPOCHS = 50
+BATCH_SIZE = 128
+LR = 1e-3
+WEIGHT_DECAY = 1e-4
+LABEL_SMOOTHING = 0.1
+NUM_WORKERS = 2
+EARLY_STOP_PATIENCE = 10
+
+OUT_DIR = Path("runs") / "sports_cnn_v1"
+
+USE_WANDB = True
+WANDB_PROJECT = "zneus-project-2"
+WANDB_RUN_NAME = "sports_cnn_model3_1"
+WANDB_LOG_FREQUENCY = 500
 
 @torch.no_grad()
 def evaluate(model, loader, device, criterion, return_predictions=False):
@@ -282,7 +279,6 @@ def main():
     if USE_WANDB:
         wandb.init(
             project=WANDB_PROJECT,
-            entity=WANDB_ENTITY,
             name=WANDB_RUN_NAME,
             config={
                 "epochs": EPOCHS,
@@ -295,7 +291,7 @@ def main():
             }
         )
 
-    model = MODEL.to(device)
+    model = CNN().to(device)
     
     if USE_WANDB:
         wandb.watch(model, log="all", log_freq=WANDB_LOG_FREQUENCY)
