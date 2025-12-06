@@ -1,5 +1,5 @@
 from pathlib import Path
-from model import CNN1, CNN2
+from model import CNN1, CNN1_2, CNN2
 
 # Model
 MODEL = CNN1()                  #CNN1(), CNN1_2(), CNN2()
