@@ -2,7 +2,7 @@ from pathlib import Path
 from model import CNN1,  CNN2,  CNN3
 
 # Model
-MODEL = CNN2()                  #CNN1(), CNN2(), CNN3()
+MODEL = CNN3()                  #CNN1(), CNN2(), CNN3()
 
 # Training parameters
 EPOCHS = 50

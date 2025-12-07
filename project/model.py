@@ -111,7 +111,7 @@ class CNN2(nn.Module):
         )
 
         self.relu = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout(p=0.3)
+        self.dropout = nn.Dropout(p=0.2)
         self.fc_dropout = nn.Dropout(p=0.5)
 
         self.layer1 = self.make_layer(64, 64, blocks=3, stride=1)
@@ -193,6 +193,8 @@ class CNN3(nn.Module):
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         )
 
+        self.dropout = nn.Dropout(p=0.2)
+        self.fc_dropout = nn.Dropout(p=0.5)
         self.relu = nn.ReLU(inplace=True)
 
         self.layer1 = self.make_layer(64, 64, blocks=2, stride=1)
@@ -231,6 +233,7 @@ class CNN3(nn.Module):
             out = block["conv1"](x)
             out = block["bn1"](out)
             out = self.relu(out)
+            out = self.dropout(out)
             out = block["conv2"](out)
             out = block["bn2"](out)
             if "downsample" in block:
@@ -258,6 +261,7 @@ class CNN3(nn.Module):
         x = self.forward_layer(x, self.layer4)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
+        x = self.fc_dropout(x)
         x = self.fc(x)
         return x
 
