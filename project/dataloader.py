@@ -37,18 +37,21 @@ class SportsImageDataset(Dataset):
         if augment:
             # Perform image augmentations
             self.transform = transforms.Compose([
-                transforms.Resize((224, 224)), # Make sure all images are of size 224x224
-                transforms.RandomHorizontalFlip(p=0.5), # 50% change to horizontally flip
-                transforms.ColorJitter( # Randomly adjust color properties
-                    brightness = 0.2,                # Adjust brightness
-                    contrast = (0.8, 1.2),           # Adjust contrast
-                    saturation = (0.8, 1.2),         # Adjust saturation
-                    hue = 0.05                       # Adjust hue
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.ColorJitter(
+                    brightness=0.2,
+                    contrast=0.2,
+                    saturation=0.2,
+                    hue=0.05,
                 ),
+                transforms.RandomRotation(20),
+                transforms.RandomAffine(degrees=20, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
+                transforms.RandomPerspective(distortion_scale=0.1, p=0.5),
                 transforms.ToTensor(),
-                transforms.Normalize( # Normalize RGB using ImageNet mean and std
-                    mean = [0.485, 0.456, 0.406],
-                    std = [0.229, 0.224, 0.225])
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                ),
             ])
         else:
             self.transform = transforms.Compose([

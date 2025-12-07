@@ -1,14 +1,14 @@
 from pathlib import Path
-from model import CNN1, CNN1_2, CNN2
+from model import CNN1,  CNN2,  CNN3
 
 # Model
-MODEL = CNN1()                  #CNN1(), CNN1_2(), CNN2()
+MODEL = CNN2()                  #CNN1(), CNN2(), CNN3()
 
 # Training parameters
 EPOCHS = 50
 BATCH_SIZE = 128
 LR = 1e-3
-WEIGHT_DECAY = 1e-4
+WEIGHT_DECAY = 1e-3
 LABEL_SMOOTHING = 0.1
 NUM_WORKERS = 2
 EARLY_STOP_PATIENCE = 10

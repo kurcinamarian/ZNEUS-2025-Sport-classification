@@ -42,7 +42,8 @@ from config import (
 )
 
 # Initial parameters
-ROOT_DIR = kagglehub.dataset_download("gpiosenka/sports-classification")
+#ROOT_DIR = kagglehub.dataset_download("gpiosenka/sports-classification")
+ROOT_DIR = "C:/Users/maria/.cache/kagglehub/datasets/gpiosenka/sports-classification/versions/9"
 CSV_PATH = os.path.join(ROOT_DIR, "new_sports.csv")
 
 
@@ -285,6 +286,7 @@ def main():
             entity=WANDB_ENTITY,
             name=WANDB_RUN_NAME,
             config={
+                "model": MODEL,
                 "epochs": EPOCHS,
                 "batch_size": BATCH_SIZE,
                 "lr": LR,
